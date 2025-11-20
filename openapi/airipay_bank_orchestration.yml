@@ -1,0 +1,372 @@
+openapi: 3.0.3
+info:
+  title: airipay_bank_orchestration
+  version: 1.0.0
+  description: >
+    AiriPay Bank Orchestration API.
+    Simple REST API for simulating and (mock) executing cross-border payments
+    across existing bank and PSP rails. Designed for IBM watsonx Orchestrate
+    custom skills.
+
+servers:
+  - url: https://api.airipay.example.com
+    description: Placeholder server for hackathon demo
+
+paths:
+  /simulate-payment:
+    post:
+      summary: Simulate a single payment
+      description: >
+        Given an amount and corridor, calculate the best route and alternatives
+        across available rails (SWIFT, local RTP, partner stablecoin, or an
+        AiriPay-orchestrated bundle of bank/PSP routes), with cost and
+        settlement-time estimates.
+      operationId: simulatePayment
+      tags: [Simulation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentSimulationRequest'
+      responses:
+        '200':
+          description: Simulation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentSimulationResponse'
+        '400':
+          description: Invalid request
+        '500':
+          description: Internal server error
+      security:
+        - ApiKeyAuth: []
+
+  /execute-payment:
+    post:
+      summary: Execute a payment run
+      description: >
+        Accepts a list of payments that have already been simulated and
+        creates a payment execution run. In this hackathon version,
+        execution is simulated to show orchestration behavior.
+      operationId: executePaymentRun
+      tags: [Execution]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentExecutionRequest'
+      responses:
+        '200':
+          description: Execution created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentExecutionResponse'
+        '400':
+          description: Invalid request
+        '500':
+          description: Internal server error
+      security:
+        - ApiKeyAuth: []
+
+  /payment-status/{executionId}:
+    get:
+      summary: Get payment execution status
+      description: >
+        Returns the status of a previously created payment execution run.
+      operationId: getPaymentStatus
+      tags: [Execution]
+      parameters:
+        - name: executionId
+          in: path
+          required: true
+          description: ID returned by /execute-payment
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Execution status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentStatusResponse'
+        '404':
+          description: Execution not found
+        '500':
+          description: Internal server error
+      security:
+        - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    PaymentSimulationRequest:
+      type: object
+      required:
+        - amount
+      properties:
+        amount:
+          type: number
+          format: double
+          description: Amount in sourceCurrency units
+          example: 250000
+        sourceCurrency:
+          type: string
+          description: 3-letter currency code (ISO 4217)
+          example: AED
+          default: AED
+        destinationCurrency:
+          type: string
+          description: 3-letter currency code (ISO 4217)
+          example: SAR
+          default: SAR
+        urgencyHours:
+          type: integer
+          description: >
+            Maximum acceptable settlement time in hours. If omitted,
+            the orchestration logic will assume a reasonable default.
+          example: 24
+        allowCrypto:
+          type: boolean
+          description: Whether crypto / stablecoin partner rails are allowed
+          default: true
+        riskTolerance:
+          type: string
+          description: >
+            Optional risk tolerance descriptor (e.g. "low", "medium", "high").
+          example: low
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Arbitrary additional data (invoice id, vendor id etc.)
+
+    PaymentSimulationResponse:
+      type: object
+      required:
+        - paymentId
+        - amount
+        - sourceCurrency
+        - destinationCurrency
+        - selectedRail
+      properties:
+        paymentId:
+          type: string
+          description: Server-assigned ID for this simulated payment
+          example: pay_sim_12345
+        amount:
+          type: number
+          format: double
+        sourceCurrency:
+          type: string
+          example: AED
+        destinationCurrency:
+          type: string
+          example: SAR
+        summary:
+          type: string
+          description: Short natural-language summary of the decision
+        assumptions:
+          type: string
+          description: Notes about defaults or assumptions used
+        selectedRail:
+          $ref: '#/components/schemas/RailQuote'
+        alternatives:
+          type: array
+          description: Alternative rails ordered by relevance
+          items:
+            $ref: '#/components/schemas/RailQuote'
+
+    RailQuote:
+      type: object
+      required:
+        - id
+        - displayName
+        - totalCost
+        - totalCostCurrency
+        - estimatedSettlementMinutes
+      properties:
+        id:
+          type: string
+          enum:
+            - swift_wire
+            - local_rtp
+            - stablecoin_partner
+            - orchestrated_bank_bundle
+          description: >
+            Identifier for the rail or bundle:
+            - swift_wire: traditional SWIFT payment via correspondent banks
+            - local_rtp: GCC real-time / instant payment system rail
+            - stablecoin_partner: partner stablecoin / digital asset rail
+            - orchestrated_bank_bundle: AiriPay-orchestrated combination of
+              connected bank/PSP routes (e.g. FAB, NBD, Wio, others)
+        displayName:
+          type: string
+          example: AiriPay orchestrated bank route
+        totalCost:
+          type: number
+          format: double
+          description: Total estimated cost in totalCostCurrency
+        totalCostCurrency:
+          type: string
+          example: AED
+        estimatedSettlementMinutes:
+          type: integer
+          example: 180
+        meetsUrgency:
+          type: boolean
+          description: Whether this rail meets the requested urgency
+        suitsRiskTolerance:
+          type: boolean
+          description: Whether this rail fits the user's risk tolerance
+        feesBreakdown:
+          type: object
+          properties:
+            baseFeeAED:
+              type: number
+              format: double
+            variableFeeAED:
+              type: number
+              format: double
+            fxSpreadAED:
+              type: number
+              format: double
+        steps:
+          type: array
+          items:
+            type: string
+          description: High-level steps (for human explanation)
+        riskNotes:
+          type: string
+          description: Important risk/assumption notes for this rail
+
+    PaymentExecutionRequest:
+      type: object
+      required:
+        - payments
+      properties:
+        runId:
+          type: string
+          description: Optional client-supplied run ID
+          example: week42_gcc_run
+        simulateOnly:
+          type: boolean
+          description: >
+            If true, mark as simulated execution only (no real transfers);
+            useful for demos and sandbox testing.
+          default: false
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentInstruction'
+
+    PaymentInstruction:
+      type: object
+      required:
+        - externalInvoiceId
+        - beneficiaryName
+        - amount
+        - currency
+        - rail
+      properties:
+        externalInvoiceId:
+          type: string
+          description: Reference from ERP / spreadsheet
+          example: INV-2025-0012
+        beneficiaryName:
+          type: string
+          example: Riyadh Supply Co.
+        beneficiaryAccount:
+          type: string
+          description: Masked IBAN/account or payment identifier
+          example: SA44-****-1234
+        amount:
+          type: number
+          format: double
+          example: 250000
+        currency:
+          type: string
+          example: AED
+        destinationCountry:
+          type: string
+          example: SA
+        rail:
+          type: string
+          description: >
+            Rail chosen at simulation time
+            (e.g. "swift_wire", "local_rtp", "stablecoin_partner",
+            or "orchestrated_bank_bundle").
+          example: orchestrated_bank_bundle
+        metadata:
+          type: object
+          additionalProperties: true
+
+    PaymentExecutionResponse:
+      type: object
+      required:
+        - executionId
+        - status
+      properties:
+        executionId:
+          type: string
+          example: exec_7890
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        summary:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        simulateOnly:
+          type: boolean
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentInstruction'
+
+    PaymentStatusResponse:
+      type: object
+      required:
+        - executionId
+        - status
+      properties:
+        executionId:
+          type: string
+          example: exec_7890
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        summary:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        simulateOnly:
+          type: boolean
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentStatusItem'
+
+    PaymentStatusItem:
+      type: object
+      properties:
+        externalInvoiceId:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        message:
+          type: string
